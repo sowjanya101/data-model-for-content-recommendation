@@ -1,0 +1,166 @@
+Media Content Recommendation Engine:
+
+Use Case:
+
+Design a data model for a media content recommendation engine that suggests movies or TV shows based on user preferences.
+The system should store information about users, content genres, viewing history and ratings.
+Ensure that the data model supports personalized content recommendations.
+
+Requirements:
+Include tables for users, content genres, viewing history, and ratings.
+Consider necessary columns for each table.
+
+
+Fact: 
+    watch_history 
+        user_id (FK)
+        show_id (FK)
+        date_key (FK)
+        time_key (FK)
+
+    rating
+        user_id (FK)
+        show_id (FK)
+        date_key (FK)
+        time_key (FK)
+        rating 
+
+Dims: 
+    content  
+        content_id(PK) 
+        genre
+
+        show (Many to one) to content
+            show_id(PK)
+            content_id(FK)
+
+        actor
+            actor_id(PK)
+        
+        show_actor (Many to Many)
+            show_id(FK)
+            actor_id(FK)
+
+    account 
+        account_id
+
+        user
+            user_id (PK)
+            account_id(FK)
+
+    date
+        date_key 
+
+    time 
+        time_key 
+        hour_id
+
+Query: 
+Write a SQL query to recommend the top-rated movies for a user who enjoys a specific genre.
+
+Query Breakdown: 
+- for each user, find the most enjoyed genre based on their prev ratings 
+- for each genre, find out what are the top rated content pieces baased on user ratings 
+- join these two on genre, and recommend the top rated content to user 
+- remove already watched content for each user from the recommendation
+
+
+
+insert into recommendations_staging 
+with joined_cte as (
+    select 
+        r.user_id,
+        r.show_id,  
+        c.content_id, 
+        c.genre, 
+        r.rating,
+    from rating r 
+join show s
+on r.show_id = s.show_id 
+join content c 
+on s.content_id = c.content_id
+), 
+user_genre_ratings as (
+select 
+    r.user_id, 
+    c.genre, 
+    avg(rating) as avg_rating, 
+    rank() over(partition by user_id order by avg_rating desc) as user_genre_rating
+from joined_cte
+group by 
+    c.genre, r.user_id
+), 
+genre_content_ratings as (
+select 
+    genre, 
+    content_id, 
+    avg(rating) as avg_rating, 
+    rank() over(partition by genre order by avg_rating desc) as genre_content_rating
+from joined_cte
+group by genre, content
+)
+-- for top5 fave genre of each user, recommend top3 movies/shows in that genre (15 content pieces per user)
+select 
+    user_id, 
+    genre, 
+    content_id
+from user_genre_ratings ur
+join genre_content_ratings g 
+on ur.genre = g.genre
+where ur.user_genre_rating <= 5
+and genre_content_rating <=3 ; 
+
+-- remove already watched content for each user from the recommendation
+insert into recommendations 
+select 
+    user_id, 
+    genre, 
+    content_id
+from recommendations_staging rec
+where not exists (
+    select  
+        user_id, 
+        content_id 
+    from watch_history w 
+    join show s 
+    on w.show_id = s.show_id 
+    join content c 
+    on s.content_id = c.content_id
+    where w.user_id  = rec.user_id 
+    and w.content_id = rec.content_id
+);
+
+
+user_id	show_id	content_id	genre	rating	
+user101	Friends_s1e1	Friends	comedy	5	
+user101	Friends_s7e1	Friends	comedy	4	
+user101	Friends_s4e3	Friends	comedy	5	
+user101	Anebelle	Anebelle	Horror	4	
+user102	Conjuring	Conjuring	Horror	5	
+user102	Sunset	Sunset	comedy	3	
+user102	Sunrise	Sunrise	comedy	5	
+user102	Friends_s1e1	Friends	comedy	1	
+					
+		top rated genre by user			
+		user_id	genre	avg_rating	users_genre_order
+		user101	comedy	4.6	1
+		user101	Horror	4	2
+		user102	Horror	5	1
+		user102	comedy	4.5	2
+					
+		top rated content by genre			
+		content	 genre	avg_rating 	content_genre_order
+		Sunrise	comedy	5	1
+		Friends	comedy	3.7	2
+		Sunset	comedy	3	3
+		Conjuring	Horror	5	1
+		Anebelle	Horror	4	2
+					
+					
+		for user 101, the fave genre is comedy, hence get top rated content in comedy (Sunrise) and recommend it to user101			
+		for user 102, the fave genre is Horror, hence get the top rated content in Horror (Conjuring) and recommend it to user102			
+
+
+
+
+    
